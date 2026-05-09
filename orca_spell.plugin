@@ -1,0 +1,9 @@
+[Plugin]
+Loader=python3
+Module=orca_spell
+Name=OrcaSpell
+Description=Navegação entre erros ortográficos com voz para deficiêntes visuais
+Authors=Crislaynne, Cleicinara
+Copyright=Copyright © 2026
+Website=https://github.com/CrislaynneBento/orca-spell-navigator https://github.com/cleicinarafernandes-rgb
+Version=0.1
