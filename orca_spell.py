@@ -14,17 +14,71 @@ class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
         self.erros = []
         self.indice = 0
 
-        #primeiro método rodará quando o professor ativa o plugin nas configurações do pluma
-        def do_activate(self):
-            self._adicionar_atalhos()
+    #primeiro método rodará quando o professor ativa o plugin nas configurações do pluma
+    def do_activate(self):
+        pass  
+    #segundo método rodará quando o professor desativar o plugin
+    def do_deactivate(self):
+        pass
 
-        #segundo método rodará quando o professor desativar o plugin
-        def do_deactivate(self):
-            pass
+    #terceiro método rodará toda vez que o estado da janela mudar.
+    def do_update_state(self):
+        pass
+
+    def adicionar_atalhos(self):
+        action_group = Gtk.ActionGroup(name="OrcaSpellActions")
+        #função add actions da biblioteca Gtk. 
+        action_group.add_actions([
+            #atalhos do grupo
+            ("IniciarRevisao", None, "Iniciar Revisão" "<Alt>e", None, self.iniciar_revisao),
+            ("ProximoErro", None, "Próximo Erro", "<Alt>n", None, self.proximo_erro),
+            ("ErroAnterior", None, "Erro Anterior", "<Alt>p", None, self.erro_anterior),
+            ("AceitarSugestao", None, "Aceitar Sugestão" "<Alt>s", None, self.aceitar_sugestao),
+            ("IgnorarErro", None, "Ignorar Erro", "<Alt>i", None, self.ignorar_erro),
+        ])
+
+        manager = self.window.get_ui_manager()
+        manager.insert_action_group(action_group, 0) #prioridade 0, acima de todos os outros atalhos do pluma
+            
+    def orca_fala(self, texto):
+        subprocess.Popen(["spd-say", "-l", "pt", texto])
+
+    def obter_texto(self):
+        doc = self.window.get_active_document()
+        inicio = doc.get_start_iter()
+        fim = doc.get_end_iter()
+        return doc.get_text(inicio, fim, True)
+    
+    def iniciar_revisao(self, action):
+        texto = self.obter_texto()
+        if not texto.strip():
+            self.orca_fala("O documento está vazio.")
+            return
         
-        #terceiro método rodará toda vez que o estado da janela mudar.
-        def do_update_state(self):
-            pass
+        resultado = subprocess.run(
+            ["hunspell", "-d", "pt_BR", "-l"],
+            input = texto, capture_output=True, text = True
+        )
 
+        palavras_erradas = list(set(
+            p.strip() for p in resultado.stdout.strip().split("\n") if p.strip()
+        ))
 
+        if not palavras_erradas:
+            self.orca_fala("Nenhum erro ortográfico encontrado.")
+            return
+        
+        self.erros = []
+        for palavra in palavras_erradas:
+            inicio = 0
+            while True:
+                pos = texto.find(palavra, inicio)
+                if pos == -1:
+                    break
+                self.erros.append({"palavra": palavra, "posicao": pos})
+                inicio = pos + len(palavra)
+
+        self.erros.sort(key=lambda x: x["posicao"])
+        self.indice = 0
+        self.orca_fala(f"{len(self.erros)} erros encontrados. Pressione Alt N para o primeiro")
 
