@@ -1,13 +1,13 @@
 import subprocess
 import gi
-gi.require_version('Gedit', '3.0')
-from gi.repository import GObject, Gedit, Gtk
+gi.require_version('Pluma', '1.0')
+from gi.repository import GObject, Pluma, Gtk
 
 #1. Inicializando com uma classe que permite a entrada de uma janela 
 #no Pluma, que lerá o que foi digitado pelo professor. 
-class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
+class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
     __gtype_name__ = "OrcaSpellPlugin"
-    window = GObject.Property(type=Gedit.Window)
+    window = GObject.Property(type=Pluma.Window)
 
     def __init__ (self):
         GObject.Object.__init__(self)
@@ -16,7 +16,10 @@ class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
 
     #primeiro método rodará quando o professor ativa o plugin nas configurações do pluma
     def do_activate(self):
-        self.adicionar_atalhos() 
+        with open("/tmp/orcaspell.log", "w") as f:
+            f.write("do_activate chamado!\n")
+        self.orca_fala("Plugin OrcaSpell ativado.")
+        self.adicionar_atalhos()
     #segundo método rodará quando o professor desativar o plugin
     def do_deactivate(self):
         pass
@@ -26,19 +29,34 @@ class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
         pass
 
     def adicionar_atalhos(self):
-        action_group = Gtk.ActionGroup(name="OrcaSpellActions")
-        #função add actions da biblioteca Gtk. 
-        action_group.add_actions([
-            #atalhos do grupo
-            ("IniciarRevisao", None, "Iniciar Revisão", "<Alt>e", None, self.iniciar_revisao),
-            ("ProximoErro", None, "Próximo Erro", "<Alt>n", None, self.proximo_erro),
-            ("ErroAnterior", None, "Erro Anterior", "<Alt>p", None, self.erro_anterior),
-            ("AceitarSugestao", None, "Aceitar Sugestão", "<Alt>s", None, self.aceitar_sugestao),
-            ("IgnorarErro", None, "Ignorar Erro", "<Alt>i", None, self.ignorar_erro),
-        ])
+        accel_group = Gtk.AccelGroup()
+        self.window.add_accel_group(accel_group)
 
-        manager = self.window.get_ui_manager()
-        manager.insert_action_group(action_group, 0) #prioridade 0, acima de todos os outros atalhos do pluma
+        key, mod = Gtk.accelerator_parse("<Control>F9")
+        accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE, self._iniciar_revisao_accel)
+
+        key, mod = Gtk.accelerator_parse("<Alt>n")
+        accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE, self._proximo_erro_accel)
+
+        key, mod = Gtk.accelerator_parse("<Alt>p")
+        accel_group.connect(key, mod, Gtk.AccelFlags.VISIBLE, self._erro_anterior_accel)
+
+
+
+    def _iniciar_revisao_accel(self, group, window, key, mod):
+        with open("/tmp/orcaspell.log", "a") as f:
+            f.write("_iniciar_revisao_accel chamado!\n")
+        self.iniciar_revisao(None)
+        return True
+
+    def _proximo_erro_accel(self, group, window, key, mod):
+        self.proximo_erro(None)
+        return True
+
+    def _erro_anterior_accel(self, group, window, key, mod):
+        self.erro_anterior(None)
+        return True
+
             
     def orca_fala(self, texto):
         subprocess.Popen(["spd-say", "-l", "pt", texto])
@@ -85,7 +103,7 @@ class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
 
     def anunciar_erro_atual(self):
         if not self.erros:
-            self.falar("Nenhum erro para navegar.")
+            self.orca_fala(f"Nenhum erro para navegar.")
             return
         erro = self.erros[self.indice]
         palavra = erro ["palavra"]
@@ -102,7 +120,7 @@ class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
                 if len(partes) > 1:
                     sugestao = partes[1].strip().split(",")[0].strip()
                     break
-        self.falar(
+        self.orca_fala(
             f"Erro {self.indice + 1} de {len(self.erros)}."
             f"Palavra: {palavra}. Sugestão: {sugestao}."
         )
@@ -110,34 +128,34 @@ class OrcaSpellPlugin(GObject.Object, Gedit.WindowActivatable):
 
     def proximo_erro(self, action):
         if not self.erros:
-            self.falar("Inicie a revisão primeiro com Alt E.")
+            self.orca_fala("Inicie a revisão primeiro com Alt E.")
             return
         if self.indice < len(self.erros) - 1:
             self.indice += 1 
         else:
-            self.falar("Você chegou ao último erro.")
+            self.orca_fala("Você chegou ao último erro.")
             return
         self.anunciar_erro_atual()
 
     
     def erro_anterior(self, action):
         if not self.erros:
-            self.falar("Inicie a revisão primeiro com Alt E.")
+            self.orca_fala("Inicie a revisão primeiro com Alt E.")
             return
         if self.indice > 0:
             self.indice -= 1
         else:
-            self.falar("Você está no primeiro erro.")
+            self.orca_fala("Você está no primeiro erro.")
             return
         self.anunciar_erro_atual()
     
     def aceitar_sugestao(self, action):
-        self.falar("Função aceitar sugestão em desenvolvimento.")
+        self.orca_fala("Função aceitar sugestão em desenvolvimento.")
 
     
     def ignorar_erro(self, action):
         if not self.erros:
             return
-        self.falar("Erro ignorado")
+        self.orca_fala("Erro ignorado")
         self.proximo_erro(action)
 
