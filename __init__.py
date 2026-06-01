@@ -16,10 +16,7 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             f.write("do_activate chamado!\n")
 
         try:
-            # Avisa o usuário (agora protegido contra falhas de áudio)
             self.orca_fala("OrcaSpell ativado.")
-
-            # Conecta os atalhos diretamente na janela do Pluma (Funciona em X11 e Wayland)
             self.handler_id = self.window.connect("key-press-event", self.on_key_press)
 
             with open("/tmp/orcaspell.log", "a") as f:
@@ -29,7 +26,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
                 f.write(f"ERRO ao ativar o plugin: {e}\n")
 
     def do_deactivate(self):
-        # Desconecta o evento ao desativar o plugin para liberar memória
         if self.handler_id and self.window:
             self.window.disconnect(self.handler_id)
             self.handler_id = 0
@@ -47,18 +43,14 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
         with open("/tmp/orcaspell.log", "a") as f:
             f.write(f"Tecla pressionada no Pluma: {nome_tecla} (Modificador: {state})\n")
 
-        # Opção 1: Ctrl + F8 (Caso o sistema libere a tecla)
+        # Ctrl + F8 -> Iniciar Revisão
         if state == Gdk.ModifierType.CONTROL_MASK and event.keyval == Gdk.KEY_F8:
-            with open("/tmp/orcaspell.log", "a") as f:
-                f.write("Atalhos Ctrl+F8 acionado com sucesso!\n")
             self.iniciar_revisao(None)
             return True
 
-        # Opção 2: Ctrl + Shift + H (Funciona tanto com H maiúsculo quanto h minúsculo)
+        # Ctrl + Shift + H -> Iniciar Revisão (Alternativo)
         alvo_mod = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
         if state == alvo_mod and (event.keyval == Gdk.KEY_H or event.keyval == Gdk.KEY_h):
-            with open("/tmp/orcaspell.log", "a") as f:
-                f.write("Atalho alternativo Ctrl+Shift+H acionado com sucesso!\n")
             self.iniciar_revisao(None)
             return True
 
@@ -77,7 +69,7 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             self.aceitar_sugestao(None)
             return True
 
-        # Alt + S -> Avançar entre as sugestões da palavra atual
+        # Alt + S -> Avançar entre as sugestões
         elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_s:
             self.proxima_sugestao(None)
             return True
@@ -92,6 +84,11 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             self.ler_paragrafo_atual(None)
             return True
 
+        # Alt + T -> Ler o texto todo do documento
+        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_t:
+            self.ler_texto_todo(None)
+            return True
+
         return False
 
     def orca_fala(self, texto):
@@ -100,7 +97,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
                 "piper --model ~/.local/share/piper-voices/pt_BR-faber-medium.onnx --output_raw | "
                 "pw-play --rate 22050 --channels 1 --format s16 -"
             )
-            # Executa o comando passando o texto dinamicamente
             subprocess.Popen(f'echo "{texto}" | {comando_piper}', shell=True)
         except Exception as e:
             with open("/tmp/orcaspell.log", "a") as f:
@@ -113,6 +109,21 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
         inicio = doc.get_start_iter()
         fim = doc.get_end_iter()
         return doc.get_text(inicio, fim, True)
+
+    def obter_situacao_linha(self, posicao_offset):
+        """Retorna uma tupla (linha_atual, total_linhas) baseada na numeração real do Pluma"""
+        doc = self.window.get_active_document()
+        if not doc:
+            return (1, 1)
+
+        # Cria um apontador na posição do erro para ler o número da linha (começa em 0 no GTK)
+        iter_erro = doc.get_iter_at_offset(posicao_offset)
+        linha_atual = iter_erro.get_line() + 1
+
+        # Descobre o total de linhas do documento inteiro
+        total_linhas = doc.get_line_count()
+
+        return (linha_atual, total_linhas)
 
     def iniciar_revisao(self, action):
         try:
@@ -175,21 +186,22 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
                         lista_sugestoes = [s.strip() for s in partes[1].strip().split(",")]
                         break
 
-            # Armazena todas as sugestões encontradas na memória do erro atual
             erro["lista_sugestoes"] = lista_sugestoes if lista_sugestoes else ["sem sugestão"]
             erro["indice_sugestao"] = 0
-
-            # Define a primeira sugestão como a ativa inicial
             erro["sugestao"] = erro["lista_sugestoes"][0]
 
             sugestao_inicial = erro["sugestao"]
             total_sugestoes = len(erro["lista_sugestoes"]) if lista_sugestoes else 0
 
-            # O Faber dita o erro e ensina o comando de contexto (Alt + L)
+            # Captura a linha atual e o total usando nossa nova função inteligente
+            linha_atual, total_linhas = self.obter_situacao_linha(erro["posicao"])
+
+            # O Faber agora situa perfeitamente as linhas/parágrafos antes do erro!
             self.orca_fala(
+                f"No parágrafo {linha_atual} de {total_linhas}. "
                 f"Erro {self.indice + 1} de {len(self.erros)}. "
                 f"Palavra: {palavra}. Sugestão 1 de {total_sugestoes}: {sugestao_inicial}. "
-                f"Para ouvir o parágrafo completo, pressione Alt L."
+                f"Para ouvir o parágrafo completo, pressione Alt éle." #gambiarra hehehe
             )
         except Exception as e:
             self.orca_fala(f"Erro ao verificar sugestões para a palavra {palavra}.")
@@ -206,7 +218,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             self.orca_fala("Não há outras sugestões para esta palavra.")
             return
 
-        # Rotaciona o índice entre as opções disponíveis
         erro["indice_sugestao"] = (erro["indice_sugestao"] + 1) % len(lista)
         erro["sugestao"] = lista[erro["indice_sugestao"]]
 
@@ -225,7 +236,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             self.orca_fala("Não há outras sugestões para esta palavra.")
             return
 
-        # Retrocede o índice. Se estiver na primeira (0), vai para a última (len-1)
         erro["indice_sugestao"] = (erro["indice_sugestao"] - 1) % len(lista)
         erro["sugestao"] = lista[erro["indice_sugestao"]]
 
@@ -243,17 +253,14 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
 
         erro = self.erros[self.indice]
         posicao = erro["posicao"]
-
         iter_erro = doc.get_iter_at_offset(posicao)
 
-        # Retrocede para achar o início do parágrafo
         iter_inicio = iter_erro.copy()
         while not iter_inicio.is_start() and iter_inicio.get_char() != "\n":
             iter_inicio.backward_char()
         if iter_inicio.get_char() == "\n":
             iter_inicio.forward_char()
 
-        # Avança para achar o fim do parágrafo
         iter_fim = iter_erro.copy()
         while not iter_fim.is_end() and iter_fim.get_char() != "\n":
             iter_fim.forward_char()
@@ -264,6 +271,14 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             self.orca_fala(f"No parágrafo: {paragrafo}")
         else:
             self.orca_fala("Não foi possível isolar o parágrafo.")
+
+    def ler_texto_todo(self, action):
+        """Lê o conteúdo completo do documento"""
+        texto = self.obter_texto().strip()
+        if texto:
+            self.orca_fala(f"Lendo o texto completo: {texto}")
+        else:
+            self.orca_fala("O documento está vazio.")
 
     def proximo_erro(self, action):
         if not self.erros:
@@ -307,7 +322,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             return
 
         posicao = erro["posicao"]
-
         iter_inicio = doc.get_iter_at_offset(posicao)
         iter_fim = doc.get_iter_at_offset(posicao + len(palavra_errada))
 
