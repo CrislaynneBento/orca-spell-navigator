@@ -1,5 +1,6 @@
-from gi.repository import GObject, Pluma, Gtk, Gdk
+import os
 import subprocess
+from gi.repository import GObject, Pluma, Gtk, Gdk
 
 class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
     __gtype_name__ = "OrcaSpellPlugin"
@@ -9,7 +10,9 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
         GObject.Object.__init__(self)
         self.erros = []
         self.indice = 0
-        self.handler_id = 0 # Guarda a referência do evento de teclado
+        self.handler_id = 0
+        self.processo_audio = None
+        self.caminho_dicionario = os.path.expanduser("~/.hunspell_pt_BR")
 
     def do_activate(self):
         with open("/tmp/orcaspell.log", "a") as f:
@@ -17,6 +20,7 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
 
         try:
             self.orca_fala("OrcaSpell ativado.")
+            # Captura os eventos de teclado globais da janela do Pluma
             self.handler_id = self.window.connect("key-press-event", self.on_key_press)
 
             with open("/tmp/orcaspell.log", "a") as f:
@@ -29,78 +33,101 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
         if self.handler_id and self.window:
             self.window.disconnect(self.handler_id)
             self.handler_id = 0
+        self.silenciar_faber()
         with open("/tmp/orcaspell.log", "a") as f:
             f.write("Plugin desativado.\n")
 
     def do_update_state(self):
         pass
 
+    def silenciar_faber(self):
+        """Mata o processo atual de áudio para silenciar o Faber imediatamente"""
+        if self.processo_audio and self.processo_audio.poll() is None:
+            self.processo_audio.terminate()
+            self.processo_audio = None
+        # Comando de emergência no sistema para garantir que o pw-play para
+        subprocess.Popen("pkill -f pw-play", shell=True)
+
     def on_key_press(self, window, event):
         """Gerenciador de atalhos nativo do GTK"""
         state = event.state & Gtk.accelerator_get_default_mod_mask()
+        keyval = event.keyval
+        nome_tecla = Gdk.keyval_name(keyval)
 
-        nome_tecla = Gdk.keyval_name(event.keyval)
-        with open("/tmp/orcaspell.log", "a") as f:
-            f.write(f"Tecla pressionada no Pluma: {nome_tecla} (Modificador: {state})\n")
-
-        # Ctrl + F8 -> Iniciar Revisão
-        if state == Gdk.ModifierType.CONTROL_MASK and event.keyval == Gdk.KEY_F8:
-            self.iniciar_revisao(None)
+        # 🛑 MELHORIA 1: Alt + X -> Parada de Emergência (Silenciar)
+        if state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_x:
+            self.silenciar_faber()
             return True
 
-        # Ctrl + Shift + H -> Iniciar Revisão (Alternativo)
+        # Ctrl + Shift + H ou Ctrl + F8 -> Iniciar Revisão
         alvo_mod = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
-        if state == alvo_mod and (event.keyval == Gdk.KEY_H or event.keyval == Gdk.KEY_h):
+        if (state == alvo_mod and (keyval == Gdk.KEY_H or keyval == Gdk.KEY_h)) or \
+           (state == Gdk.ModifierType.CONTROL_MASK and keyval == Gdk.KEY_F8):
             self.iniciar_revisao(None)
             return True
 
         # Alt + N -> Próximo Erro
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_n:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_n:
             self.proximo_erro(None)
             return True
 
         # Alt + P -> Erro Anterior
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_p:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_p:
             self.erro_anterior(None)
             return True
 
         # Alt + C -> Aplicar Correção/Sugestão
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_c:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_c:
             self.aceitar_sugestao(None)
             return True
 
         # Alt + S -> Avançar entre as sugestões
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_s:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_s:
             self.proxima_sugestao(None)
             return True
 
         # Alt + Z -> Voltar para a sugestão anterior
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_z:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_z:
             self.sugestao_anterior(None)
             return True
 
         # Alt + L -> Ler o parágrafo do erro atual
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_l:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_l:
             self.ler_paragrafo_atual(None)
             return True
 
         # Alt + T -> Ler o texto todo do documento
-        elif state == Gdk.ModifierType.MOD1_MASK and event.keyval == Gdk.KEY_t:
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_t:
             self.ler_texto_todo(None)
             return True
+
+        # 📝 MELHORIA 2: Alt + A -> Adicionar Palavra Atual ao Dicionário Pessoal
+        elif state == Gdk.ModifierType.MOD1_MASK and keyval == Gdk.KEY_a:
+            self.adicionar_ao_dicionario()
+            return True
+
+        # 🔍 MELHORIA 3: Monitorização em Tempo Real (Espaço ou Enter acionam a verificação)
+        if state == 0 and (keyval == Gdk.KEY_space or keyval == Gdk.KEY_Return):
+            # Deixa o caractere ser inserido primeiro, depois verifica a palavra anterior
+            GObject.idle_add(self.verificar_palavra_tempo_real)
 
         return False
 
     def orca_fala(self, texto):
         try:
+            # Garante que silencia qualquer fala anterior antes de começar uma nova
+            if self.processo_audio and self.processo_audio.poll() is None:
+                self.processo_audio.terminate()
+
             comando_piper = (
                 "piper --model ~/.local/share/piper-voices/pt_BR-faber-medium.onnx --output_raw | "
                 "pw-play --rate 22050 --channels 1 --format s16 -"
             )
-            subprocess.Popen(f'echo "{texto}" | {comando_piper}', shell=True)
+            # Guarda a referência do processo para conseguirmos pará-lo com o Alt+X
+            self.processo_audio = subprocess.Popen(f'echo "{texto}" | {comando_piper}', shell=True)
         except Exception as e:
             with open("/tmp/orcaspell.log", "a") as f:
-                f.write(f"Erro ao executar Piper no plugin: {e}\n")
+                f.write(f"Erro ao executar Piper: {e}\n")
 
     def obter_texto(self):
         doc = self.window.get_active_document()
@@ -111,19 +138,73 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
         return doc.get_text(inicio, fim, True)
 
     def obter_situacao_linha(self, posicao_offset):
-        """Retorna uma tupla (linha_atual, total_linhas) baseada na numeração real do Pluma"""
         doc = self.window.get_active_document()
         if not doc:
             return (1, 1)
-
-        # Cria um apontador na posição do erro para ler o número da linha (começa em 0 no GTK)
         iter_erro = doc.get_iter_at_offset(posicao_offset)
-        linha_atual = iter_erro.get_line() + 1
+        return (iter_erro.get_line() + 1, doc.get_line_count())
 
-        # Descobre o total de linhas do documento inteiro
-        total_linhas = doc.get_line_count()
+    def verificar_palavra_tempo_real(self):
+        """Captura a última palavra digitada antes do cursor e valida no Hunspell"""
+        doc = self.window.get_active_document()
+        if not doc:
+            return False
 
-        return (linha_atual, total_linhas)
+        cursor_iter = doc.get_iter_at_mark(doc.get_insert())
+        
+        # Anda para trás para isolar a última palavra terminada
+        iter_fim_palavra = cursor_iter.copy()
+        iter_fim_palavra.backward_word_start()
+        iter_fim_palavra.forward_word_end()
+        
+        iter_inicio_palavra = iter_fim_palavra.copy()
+        iter_inicio_palavra.backward_word_start()
+
+        palavra = doc.get_text(iter_inicio_palavra, iter_fim_palavra, True).strip()
+        
+        # Ignora pontuações ou palavras vazias/curtas
+        if not palavra or len(palavra) < 2 or not palavra.isalpha():
+            return False
+
+        # Valida rapidamente no Hunspell
+        resultado = subprocess.run(
+            ["hunspell", "-d", "pt_BR", "-l"],
+            input=palavra, capture_output=True, text=True
+        )
+        
+        if resultado.stdout.strip():
+            # Palavra está errada! Faber dá um toque de aviso discreto
+            self.orca_fala(f"Aviso, erro na palavra: {palavra}")
+        
+        return False
+
+    def adicionar_ao_dicionario(self):
+        """Adiciona a palavra atualmente selecionada na revisão ao dicionário pessoal"""
+        if not self.erros or self.indice < 0:
+            self.orca_fala("Nenhum erro selecionado para adicionar ao dicionário.")
+            return
+
+        erro_atual = self.erros[self.indice]
+        palavra = erro_atual["palavra"]
+
+        try:
+            # Cria o ficheiro de dicionário pessoal se ele não existir
+            if not os.path.exists(self.caminho_dicionario):
+                with open(self.caminho_dicionario, "w") as f:
+                    f.write("PERSONAL_DICTIONARY\n") # Cabeçalho padrão do Hunspell
+
+            # Escreve a palavra nova lá dentro
+            with open(self.caminho_dicionario, "a") as f:
+                f.write(f"{palavra}\n")
+
+            self.orca_fala(f"Palavra {palavra} adicionada ao seu dicionário pessoal.")
+            
+            # Remove este erro da lista atual para não precisares de o corrigir nesta sessão
+            self.erros.pop(self.indice)
+            self.indice -= 1
+            self.proximo_erro(None)
+        except Exception as e:
+            self.orca_fala("Não foi possível salvar a palavra no dicionário.")
 
     def iniciar_revisao(self, action):
         try:
@@ -134,7 +215,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
 
             palavras_erradas = set()
 
-            # Roda o Hunspell (Erros ortográficos brutos)
             resultado_hunspell = subprocess.run(
                 ["hunspell", "-d", "pt_BR", "-l"],
                 input=texto, capture_output=True, text=True, check=True
@@ -169,6 +249,13 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
         if not self.erros:
             self.orca_fala("Nenhum erro para navegar.")
             return
+        
+        # Garante que o índice não sai das bordas caso tenhamos removido palavras (via dicionário)
+        if self.indice >= len(self.erros):
+            self.indice = len(self.erros) - 1
+        if self.indice < 0:
+            self.indice = 0
+
         erro = self.erros[self.indice]
         palavra = erro["palavra"]
 
@@ -193,15 +280,13 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             sugestao_inicial = erro["sugestao"]
             total_sugestoes = len(erro["lista_sugestoes"]) if lista_sugestoes else 0
 
-            # Captura a linha atual e o total usando nossa nova função inteligente
             linha_atual, total_linhas = self.obter_situacao_linha(erro["posicao"])
 
-            # O Faber agora situa perfeitamente as linhas/parágrafos antes do erro!
             self.orca_fala(
                 f"No parágrafo {linha_atual} de {total_linhas}. "
                 f"Erro {self.indice + 1} de {len(self.erros)}. "
                 f"Palavra: {palavra}. Sugestão 1 de {total_sugestoes}: {sugestao_inicial}. "
-                f"Para ouvir o parágrafo completo, pressione Alt éle." #gambiarra hehehe
+                f"Para ouvir o parágrafo completo, pressione Alt L."
             )
         except Exception as e:
             self.orca_fala(f"Erro ao verificar sugestões para a palavra {palavra}.")
@@ -273,7 +358,6 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
             self.orca_fala("Não foi possível isolar o parágrafo.")
 
     def ler_texto_todo(self, action):
-        """Lê o conteúdo completo do documento"""
         texto = self.obter_texto().strip()
         if texto:
             self.orca_fala(f"Lendo o texto completo: {texto}")
