@@ -179,7 +179,7 @@ class OrcaSpellPlugin(GObject.Object, Pluma.WindowActivatable):
 
         palavra = doc.get_text(iter_inicio_palavra, iter_fim_palavra, True).strip()
 
-        if not palabra or len(palavra) < 2 or not palavra.isalpha():
+        if not palavra or len(palavra) < 2 or not palavra.isalpha():
             return False
 
         resultado = subprocess.run(
