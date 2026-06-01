@@ -1,3 +1,5 @@
+##Versão de código inicial
+
 import subprocess
 import gi
 gi.require_version('Pluma', '1.0')
